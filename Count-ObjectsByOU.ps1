@@ -33,35 +33,39 @@
 <#
 
 .DESCRIPTION
-A script to count the number of objects of different types in each OU.
-The aim is to identify OUs that can be removed.
+A script to find empty OUs that can be removed.
+An OU may have no objects in it directly, but may still have objects in a child OU.
 The name of the output report is hard-coded in the script. Edit it before running.
-You can add any further details to the script, for example the number of enabled and disabled accounts in each OU.
-The reason for using Get-ADUser etc. as well as Get-ADObject is so that we can access distinct properties of each object type more easily.
 
 #>
 
 $fileDate = Get-Date -Format ddMMyy
-$OUs = Get-ADOrganizationalUnit -Properties CanonicalName, Created, LinkedGroupPolicyObjects -Filter *
-$OUs | Sort-Object CanonicalName | ForEach-Object {
-    $objects = Get-ADObject -Filter * -SearchBase $_.DistinguishedName -SearchScope OneLevel
-    $users = Get-ADUser -Filter * -SearchBase $_.DistinguishedName -SearchScope OneLevel -Properties Enabled
-    $computers = Get-ADComputer -Filter * -SearchBase $_.DistinguishedName -SearchScope OneLevel -Properties Enabled, OperatingSystem
-    $groups = Get-ADGroup -Filter * -SearchBase $_.DistinguishedName -SearchScope OneLevel
-    [pscustomobject]@{
-        'Name'           = Split-Path $_.CanonicalName -Leaf
-        'Canonical Name' = $_.CanonicalName
-        'Created'        = (Get-Date $_.Created -Format dd/MM/yyyy)
-        'Objects'        = $objects | Measure-Object | Select-Object -ExpandProperty Count
-        'Users'          = $users  | Measure-Object | Select-Object -ExpandProperty Count
-        'Contacts'       = $objects | Where-Object { $_.ObjectClass -eq 'Contact' } | Measure-Object | Select-Object -ExpandProperty Count
-        'Computers'      = $computers | Measure-Object | Select-Object -ExpandProperty Count
-        'Win10'          = $computers | Where-Object { $_.OperatingSystem -Like "Windows 10*" } | Measure-Object | Select-Object -ExpandProperty Count
-        'Server'         = $computers | Where-Object { $_.OperatingSystem -Like "Windows Server*" } | Measure-Object | Select-Object -ExpandProperty Count
-        'Groups'         = $groups | Measure-Object | Select-Object -ExpandProperty Count
-        'Security'       = $groups | Where-Object { $_.GroupCategory -eq 'Security' } | Measure-Object | Select-Object -ExpandProperty Count
-        'Distribution'   = $groups | Where-Object { $_.GroupCategory -eq 'Distribution' } | Measure-Object | Select-Object -ExpandProperty Count
-        'GPOs'           = $_.LinkedGroupPolicyObjects | Measure-Object | Select-Object -ExpandProperty Count
-        'OUs'            = Get-ADOrganizationalUnit -Filter * -SearchBase $_.DistinguishedName -SearchScope OneLevel | Measure-Object | Select-Object -ExpandProperty Count
-    }
-} | Export-Csv "C:\Temp\ObjectsByOU_$fileDate.csv" -NoTypeInformation
+$domain = (Get-ADRootDSE).DefaultNamingContext
+$Ous = Get-ADOrganizationalUnit -Filter * -SearchBase $domain -SearchScope Subtree -Properties CanonicalName, Created, Description, LinkedGroupPolicyObjects, Modified | Sort-Object CanonicalName
+$objects = Get-ADObject -Filter * -SearchBase $domain -SearchScope Subtree
+$objClass = @('Contact', 'Computer', 'Group', 'OrganizationalUnit', 'User')
+$Ous.ForEach({
+        $Dn = $_.DistinguishedName
+        $objectsInOu = $objects | Where-Object { $_.DistinguishedName -match "$Dn\Z" }
+        $countObj = $objectsInOu | Where-Object { $_.ObjectClass -ne 'OrganizationalUnit' } | Measure-Object | Select-Object -ExpandProperty Count
+        $countUser = $objectsinOu | Where-Object { $_.ObjectClass -eq 'User' } | Measure-Object | Select-Object -ExpandProperty Count
+        $countComputer = $objectsinOu | Where-Object { $_.ObjectClass -eq 'Computer' } | Measure-Object | Select-Object -ExpandProperty Count
+        $countGroup = $objectsinOu | Where-Object { $_.ObjectClass -eq 'Group' } | Measure-Object | Select-Object -ExpandProperty Count
+        $countContact = $objectsinOu | Where-Object { $_.ObjectClass -eq 'Contact' } | Measure-Object | Select-Object -ExpandProperty Count
+        $countOther = $objectsinOu | Where-Object { $_.ObjectClass -notin $objClass } | Measure-Object | Select-Object -ExpandProperty Count
+        $countOu = ($objectsinOu | Where-Object { $_.ObjectClass -eq 'OrganizationalUnit' } | Measure-Object | Select-Object -ExpandProperty Count) - 1 # subtract 1 because the parent OU is included in the objects
+        [pscustomobject]@{
+            'Name'           = Split-Path $_.CanonicalName -Leaf
+            'Canonical Name' = $_.CanonicalName
+            'Dn'             = $Dn
+            'Created'        = (Get-Date $_.Created -Format dd/MM/yyyy)
+            'Total'          = $countObj
+            'Users'          = $countUser
+            'Computers'      = $countComputer
+            'Groups'         = $countGroup
+            'Contacts'       = $countContact
+            'Other'          = $countOther
+            'GPOs'           = $_.LinkedGroupPolicyObjects | Measure-Object | Select-Object -ExpandProperty Count
+            'OUs'            = $CountOu
+        }
+    }) | Export-Csv "C:\Temp\CountObjectsByOU_$fileDate.csv" -NoTypeInformation

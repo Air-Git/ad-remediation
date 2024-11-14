@@ -35,10 +35,11 @@
 .DESCRIPTION
 A script to report on all user accounts in AD and discover which ones are inactive.
 Because most environments now are hybrid, this requires finding the matching account in Entra ID. We also check Exchange Online for shared mailboxes.
-You should check you have access to Entra ID via the Microsoft Graph PowerShell SDK before proceeding.
+You should check you have access to Entra ID via the Microsoft Graph PowerShell SDK, and to Exchange Online, before proceeding.
 The script produces an Excel report, which you can filter to show inactive user accounts.
 The name of the output report is hard-coded in the script. Edit it before running.
 The script is resource intensive because it needs to read all AD user accounts, all Entra ID user accounts and all mailboxes to match them up.
+
 #>
 
 $date = Get-Date
